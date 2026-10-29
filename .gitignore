@@ -1,0 +1,31 @@
+# ─── IDE ───────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ─── Java / Maven ──────────────────────────────────────────────
+backend/target/
+backend/.mvn/wrapper/maven-wrapper.jar
+backend/*.log
+
+# ─── Node ──────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ─── Environment (NEVER commit) ────────────────────────────────
+backend/.env
+frontend/.env.local
+.env
+
+# ─── Uploads ───────────────────────────────────────────────────
+backend/uploads/
+
+# ─── OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.log
