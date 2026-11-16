@@ -3,19 +3,27 @@ package com.fooddonation.backend.service;
 import com.fooddonation.backend.entity.*;
 import com.fooddonation.backend.entity.Donation.DonationStatus;
 import com.fooddonation.backend.entity.EmailNotificationLog.DeliveryStatus;
+import com.fooddonation.backend.entity.NgoProfile.VerificationStatus;
+import com.fooddonation.backend.entity.User.AccountStatus;
+import com.fooddonation.backend.entity.User.Role;
 import com.fooddonation.backend.exception.ForbiddenException;
 import com.fooddonation.backend.repository.DonationRepository;
 import com.fooddonation.backend.repository.EmailNotificationLogRepository;
 import com.fooddonation.backend.repository.NgoProfileRepository;
 import com.fooddonation.backend.repository.UserRepository;
+import com.fooddonation.backend.util.GeoUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
@@ -34,6 +42,12 @@ public class DonationEmailService {
     @Autowired private UserRepository userRepository;
     @Autowired private EmailNotificationLogRepository emailNotificationLogRepository;
     @Autowired private BrevoTransactionalEmailSender emailSender;
+
+    @Value("${app.email.notification-radius-km:${app.sms.notification-radius-km:10.0}}")
+    private Double emailNotificationRadiusKm = 10.0;
+
+    @Value("${app.frontend.url:${app.base-url:http://localhost:5173}}")
+    private String frontendUrl = "http://localhost:5173";
 
     @Transactional
     public EmailNotificationLog sendAcceptanceEmailNotification(Long donationId) {
@@ -197,7 +211,470 @@ public class DonationEmailService {
     }
 
     public Optional<EmailNotificationLog> getLatestEmailStatus(Long donationId) {
+        if (donationId == null) return Optional.empty();
+        Donation donation = donationRepository.findById(donationId).orElse(null);
+        if (donation != null && donation.getDonor() != null) {
+            Optional<EmailNotificationLog> donorLog = emailNotificationLogRepository
+                    .findFirstByDonationIdAndRecipientIdOrderByCreatedAtDesc(donationId, donation.getDonor().getId());
+            if (donorLog.isPresent()) {
+                return donorLog;
+            }
+        }
         return emailNotificationLogRepository.findFirstByDonationIdOrderByCreatedAtDesc(donationId);
+    }
+
+    // ── Nearby NGO Email Dispatch Workflow ─────────────────────
+
+    @Transactional
+    public List<EmailNotificationLog> sendNearbyDonationAlertEmails(Long donationId) {
+        if (donationId == null) {
+            log.warn("Cannot send nearby NGO alert emails: donationId is null");
+            return Collections.emptyList();
+        }
+
+        Donation donation = donationRepository.findById(donationId).orElse(null);
+        if (donation == null) {
+            log.error("Donation #{} not found; cannot send nearby NGO alert emails", donationId);
+            return Collections.emptyList();
+        }
+
+        if (donation.getStatus() != DonationStatus.AVAILABLE) {
+            log.info("Donation #{} status is {} (not AVAILABLE); skipping nearby NGO alert emails",
+                    donationId, donation.getStatus());
+            return Collections.emptyList();
+        }
+
+        if (donation.getPickupDeadline() != null && donation.getPickupDeadline().isBefore(LocalDateTime.now())) {
+            log.info("Donation #{} has already expired; skipping nearby NGO alert emails", donationId);
+            return Collections.emptyList();
+        }
+
+        Double donLat = donation.getPickupLatitude();
+        Double donLng = donation.getPickupLongitude();
+        if (donLat == null || donLng == null) {
+            log.warn("Donation #{} has no pickup coordinates; skipping nearby NGO alert emails", donationId);
+            return Collections.emptyList();
+        }
+
+        double radiusKm = emailNotificationRadiusKm != null ? emailNotificationRadiusKm : 10.0;
+        List<NgoProfile> allNgos = ngoProfileRepository.findAll();
+        List<EmailNotificationLog> dispatchedLogs = new ArrayList<>();
+
+        for (NgoProfile profile : allNgos) {
+            try {
+                if (!isEligibleNgoForEmail(profile, donLat, donLng, radiusKm)) {
+                    continue;
+                }
+
+                User ngoUser = profile.getUser();
+
+                if (emailNotificationLogRepository.existsByDonationIdAndRecipientIdAndDeliveryStatus(
+                        donation.getId(), ngoUser.getId(), DeliveryStatus.SENT)) {
+                    log.info("Idempotency: Email alert already sent for donation #{} to NGO {}; skipping duplicate",
+                            donation.getId(), ngoUser.getId());
+                    continue;
+                }
+
+                Donation current = donationRepository.findById(donation.getId()).orElse(null);
+                if (current == null || current.getStatus() != DonationStatus.AVAILABLE ||
+                        (current.getPickupDeadline() != null && current.getPickupDeadline().isBefore(LocalDateTime.now()))) {
+                    log.info("Donation #{} is no longer available (current status: {}); cancelling remaining alert emails",
+                            donation.getId(), current != null ? current.getStatus() : "null");
+                    break;
+                }
+
+                double distanceKm = GeoUtils.haversineKm(donLat, donLng, profile.getLatitude(), profile.getLongitude());
+                EmailNotificationLog logEntry = sendAlertEmailToNgo(donation, ngoUser, profile, distanceKm);
+                if (logEntry != null) {
+                    dispatchedLogs.add(logEntry);
+                }
+            } catch (Exception ex) {
+                log.error("Failed to process nearby email notification for NGO profile #{}: {}",
+                        profile.getId(), ex.getMessage(), ex);
+            }
+        }
+
+        log.info("Finished nearby NGO email notification workflow for donation #{}. Notified {} eligible NGO(s)",
+                donationId, dispatchedLogs.size());
+        return dispatchedLogs;
+    }
+
+    private boolean isEligibleNgoForEmail(NgoProfile profile, double donLat, double donLng, double radiusKm) {
+        if (profile == null) return false;
+
+        if (profile.getVerificationStatus() != VerificationStatus.VERIFIED) {
+            return false;
+        }
+
+        if (!profile.isEmailNotificationsEnabled()) {
+            return false;
+        }
+
+        if (profile.getLatitude() == null || profile.getLongitude() == null) {
+            return false;
+        }
+
+        User user = profile.getUser();
+        if (user == null || user.getRole() != Role.NGO || user.getAccountStatus() != AccountStatus.ACTIVE) {
+            return false;
+        }
+
+        if (user.getEmail() == null || user.getEmail().isBlank() || !EMAIL_PATTERN.matcher(user.getEmail().trim()).matches()) {
+            return false;
+        }
+
+        double distanceKm = GeoUtils.haversineKm(donLat, donLng, profile.getLatitude(), profile.getLongitude());
+        return distanceKm <= radiusKm;
+    }
+
+    private EmailNotificationLog sendAlertEmailToNgo(Donation donation, User ngoUser, NgoProfile profile, double distanceKm) {
+        String subject = "Annadaan Alert: New Food Donation Available Nearby! (" + donation.getFoodName() + ")";
+        String ngoEmail = ngoUser.getEmail().trim();
+        String ngoName = (profile.getOrganizationName() != null && !profile.getOrganizationName().isBlank())
+                ? profile.getOrganizationName().trim() : ngoUser.getName();
+        String contactPerson = (profile.getContactPerson() != null && !profile.getContactPerson().isBlank())
+                ? profile.getContactPerson().trim() : ngoName;
+
+        EmailNotificationLog logEntry = emailNotificationLogRepository
+                .findFirstByDonationIdAndRecipientIdOrderByCreatedAtDesc(donation.getId(), ngoUser.getId())
+                .filter(l -> l.getDeliveryStatus() != DeliveryStatus.SENT)
+                .orElseGet(() -> EmailNotificationLog.builder()
+                        .donation(donation)
+                        .recipient(ngoUser)
+                        .recipientEmail(ngoEmail)
+                        .subject(subject)
+                        .deliveryStatus(DeliveryStatus.PENDING)
+                        .attemptCount(0)
+                        .build());
+
+        logEntry.setAttemptCount(logEntry.getAttemptCount() + 1);
+        logEntry.setLastAttemptAt(LocalDateTime.now());
+        logEntry.setSubject(subject);
+        logEntry.setRecipientEmail(ngoEmail);
+
+        String claimUrl = (frontendUrl != null ? frontendUrl.replaceAll("/+$", "") : "http://localhost:5173")
+                + "/donations/" + donation.getId();
+
+        String textContent = buildNearbyNgoAlertPlainText(donation, ngoName, contactPerson, distanceKm, claimUrl);
+        String htmlContent = buildNearbyNgoAlertHtml(donation, ngoName, contactPerson, distanceKm, claimUrl);
+
+        try {
+            String providerMessageId = emailSender.sendEmail(ngoEmail, ngoName, subject, htmlContent, textContent);
+            logEntry.setDeliveryStatus(DeliveryStatus.SENT);
+            logEntry.setProviderMessageId(providerMessageId);
+            logEntry.setSentAt(LocalDateTime.now());
+            logEntry.setFailureReason(null);
+            log.info("Successfully delivered nearby donation alert email to NGO {} ({}) for donation #{}",
+                    ngoEmail, ngoName, donation.getId());
+        } catch (Exception ex) {
+            log.error("Failed to deliver nearby donation alert email to NGO {} ({}) for donation #{}: {}",
+                    ngoEmail, ngoName, donation.getId(), ex.getMessage(), ex);
+            logEntry.setDeliveryStatus(DeliveryStatus.FAILED);
+            logEntry.setFailureReason(ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName());
+        }
+
+        return emailNotificationLogRepository.save(logEntry);
+    }
+
+    public String buildNearbyNgoAlertPlainText(
+            Donation donation, String ngoName, String contactPerson, double distanceKm, String claimUrl) {
+
+        String recipientGreeting = (contactPerson != null && !contactPerson.isBlank())
+                ? "Dear " + contactPerson + " (" + ngoName + "),"
+                : "Dear " + ngoName + " Team,";
+
+        String foodName = donation.getFoodName() != null ? donation.getFoodName() : "Food Donation";
+        String description = (donation.getDescription() != null && !donation.getDescription().isBlank())
+                ? donation.getDescription() : "None provided";
+        String quantity = donation.getQuantity() + " " +
+                (donation.getQuantityUnit() != null ? donation.getQuantityUnit().name() : "");
+        String servings = donation.getServings() != null ? ("~" + donation.getServings() + " people") : "Not specified";
+        String category = formatCategory(donation.getCategory());
+        String dietary = donation.getDietaryType() != null ? donation.getDietaryType().name().replace('_', ' ') : "Not specified";
+        String allergens = (donation.getAllergenInfo() != null && !donation.getAllergenInfo().isBlank())
+                ? donation.getAllergenInfo() : "None mentioned";
+        String handling = (donation.getHandlingDetails() != null && !donation.getHandlingDetails().isBlank())
+                ? donation.getHandlingDetails() : "Standard handling";
+        String pickupAddress = donation.getPickupAddress() != null ? donation.getPickupAddress() : "Available upon claim";
+        String deadline = donation.getPickupDeadline() != null
+                ? donation.getPickupDeadline().format(DATE_FORMATTER) + " at " + donation.getPickupDeadline().format(TIME_FORMATTER)
+                : "Not specified";
+        String prepTime = donation.getPreparationTime() != null
+                ? donation.getPreparationTime().format(DATE_FORMATTER) + " at " + donation.getPreparationTime().format(TIME_FORMATTER)
+                : "Not specified";
+
+        return recipientGreeting + "\n\n"
+                + "A new surplus food donation is available nearby (~" + String.format("%.1f", distanceKm) + " km away)!\n\n"
+                + "Here are the donation details:\n\n"
+                + "Food Donation Details\n"
+                + "- Food Name: " + foodName + "\n"
+                + "- Food Category: " + category + "\n"
+                + "- Quantity: " + quantity + " (" + servings + ")\n"
+                + "- Dietary Type: " + dietary + "\n"
+                + "- Allergen Info: " + allergens + "\n"
+                + "- Description: " + description + "\n"
+                + "- Storage/Handling: " + handling + "\n"
+                + "- Prepared At: " + prepTime + "\n\n"
+                + "Pickup & Location Details\n"
+                + "- Distance: ~" + String.format("%.1f", distanceKm) + " km from your NGO location\n"
+                + "- Pickup Address: " + pickupAddress + "\n"
+                + "- Pickup Deadline: " + deadline + "\n\n"
+                + "To view full details and claim this donation, please visit:\n"
+                + claimUrl + "\n\n"
+                + "Thank you for partnering with Annadaan to reduce food waste and feed those in need.\n\n"
+                + "Regards,\n"
+                + "Team Annadaan\n";
+    }
+
+    public String buildNearbyNgoAlertHtml(
+            Donation donation, String ngoName, String contactPerson, double distanceKm, String claimUrl) {
+
+        String recipientGreeting = (contactPerson != null && !contactPerson.isBlank())
+                ? "Dear " + escapeHtml(contactPerson) + " (" + escapeHtml(ngoName) + "),"
+                : "Dear " + escapeHtml(ngoName) + " Team,";
+
+        String foodName = donation.getFoodName() != null ? escapeHtml(donation.getFoodName()) : "Food Donation";
+        String description = (donation.getDescription() != null && !donation.getDescription().isBlank())
+                ? escapeHtml(donation.getDescription()) : "None provided";
+        String quantity = donation.getQuantity() + " " +
+                (donation.getQuantityUnit() != null ? escapeHtml(donation.getQuantityUnit().name()) : "");
+        String servings = donation.getServings() != null ? ("~" + donation.getServings() + " people") : "Not specified";
+        String category = escapeHtml(formatCategory(donation.getCategory()));
+        String dietary = donation.getDietaryType() != null ? escapeHtml(donation.getDietaryType().name().replace('_', ' ')) : "Not specified";
+        String allergens = (donation.getAllergenInfo() != null && !donation.getAllergenInfo().isBlank())
+                ? escapeHtml(donation.getAllergenInfo()) : "None mentioned";
+        String handling = (donation.getHandlingDetails() != null && !donation.getHandlingDetails().isBlank())
+                ? escapeHtml(donation.getHandlingDetails()) : "Standard handling";
+        String pickupAddress = donation.getPickupAddress() != null ? escapeHtml(donation.getPickupAddress()) : "Available upon claim";
+        String deadline = donation.getPickupDeadline() != null
+                ? escapeHtml(donation.getPickupDeadline().format(DATE_FORMATTER) + ", " + donation.getPickupDeadline().format(TIME_FORMATTER))
+                : "Not specified";
+        String prepTime = donation.getPreparationTime() != null
+                ? escapeHtml(donation.getPreparationTime().format(DATE_FORMATTER) + ", " + donation.getPreparationTime().format(TIME_FORMATTER))
+                : "Not specified";
+        String distStr = String.format("%.1f", distanceKm);
+        String donationIdStr = String.valueOf(donation.getId());
+
+        return String.format("""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Food Donation Available Nearby!</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f1f5f2;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #1f2937;
+      line-height: 1.6;
+    }
+    .wrapper {
+      width: 100%%;
+      background-color: #f1f5f2;
+      padding: 30px 10px;
+      box-sizing: border-box;
+    }
+    .container {
+      max-width: 620px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.07);
+      border: 1px solid #e5e7eb;
+    }
+    .header {
+      background: linear-gradient(135deg, #1b4332 0%%, #2d6a4f 100%%);
+      padding: 32px 28px;
+      text-align: center;
+      color: #ffffff;
+    }
+    .brand-logo {
+      display: inline-block;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin: 0;
+      color: #ffffff;
+    }
+    .brand-leaf {
+      color: #74c69d;
+      margin-right: 6px;
+    }
+    .brand-tagline {
+      margin: 6px 0 0;
+      font-size: 13px;
+      color: #b7e4c7;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    .hero {
+      padding: 24px 28px 10px;
+    }
+    .distance-badge {
+      display: inline-block;
+      background: #d8f3dc;
+      color: #1b4332;
+      font-weight: 700;
+      font-size: 13px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      border: 1px solid #b7e4c7;
+      margin-bottom: 12px;
+    }
+    .hero-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #1b4332;
+      margin: 0 0 10px;
+    }
+    .hero-p {
+      margin: 0 0 16px;
+      font-size: 15px;
+      color: #374151;
+    }
+    .card {
+      margin: 0 28px 20px;
+      background: #f8faf9;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+      overflow: hidden;
+    }
+    .card-header {
+      background: #edf5f0;
+      padding: 12px 18px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #2d6a4f;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid #e0ece4;
+    }
+    .data-table {
+      width: 100%%;
+      border-collapse: collapse;
+    }
+    .data-table td {
+      padding: 10px 18px;
+      font-size: 14px;
+      border-bottom: 1px solid #edf2ee;
+      vertical-align: top;
+    }
+    .data-table tr:last-child td {
+      border-bottom: none;
+    }
+    .label {
+      color: #6b7280;
+      font-weight: 600;
+      width: 38%%;
+    }
+    .value {
+      color: #111827;
+      font-weight: 500;
+    }
+    .cta-block {
+      text-align: center;
+      padding: 20px 28px 28px;
+    }
+    .btn {
+      display: inline-block;
+      background: #2d6a4f;
+      color: #ffffff !important;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 15px;
+      padding: 14px 28px;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(45, 106, 79, 0.3);
+    }
+    .footer {
+      background: #fafbf9;
+      border-top: 1px solid #e5e7eb;
+      padding: 22px 28px;
+      text-align: center;
+      font-size: 12px;
+      color: #6b7280;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="container">
+      <div class="header">
+        <h1 class="brand-logo"><span class="brand-leaf">&#127793;</span>Annadaan</h1>
+        <p class="brand-tagline">Surplus Food Rescue &amp; Donation Network</p>
+      </div>
+
+      <div class="hero">
+        <span class="distance-badge">&#128205; ~%s km away</span>
+        <h2 class="hero-title">New Food Donation Available Nearby!</h2>
+        <p class="hero-p">%s</p>
+        <p class="hero-p">A donor has just posted a surplus food donation within your service radius. Review the details below to claim it for distribution:</p>
+      </div>
+
+      <div class="card">
+        <div class="card-header">&#127828; Food Details</div>
+        <table class="data-table">
+          <tr><td class="label">Food Name</td><td class="value"><strong>%s</strong> (#%s)</td></tr>
+          <tr><td class="label">Category</td><td class="value">%s</td></tr>
+          <tr><td class="label">Quantity</td><td class="value">%s (%s)</td></tr>
+          <tr><td class="label">Dietary Type</td><td class="value">%s</td></tr>
+          <tr><td class="label">Allergen Info</td><td class="value">%s</td></tr>
+          <tr><td class="label">Prepared At</td><td class="value">%s</td></tr>
+          <tr><td class="label">Description</td><td class="value">%s</td></tr>
+          <tr><td class="label">Storage/Handling</td><td class="value">%s</td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-header">&#128205; Pickup &amp; Timing</div>
+        <table class="data-table">
+          <tr><td class="label">Distance</td><td class="value">~%s km from your registered location</td></tr>
+          <tr><td class="label">Pickup Address</td><td class="value">%s</td></tr>
+          <tr><td class="label">Pickup Deadline</td><td class="value"><strong style="color: #b91c1c;">%s</strong></td></tr>
+        </table>
+      </div>
+
+      <div class="cta-block">
+        <a href="%s" class="btn">View &amp; Claim Donation</a>
+      </div>
+
+      <div class="footer">
+        <p style="margin: 0 0 6px;">
+          You received this alert because <strong>%s</strong> is verified on Annadaan and within matching distance of this donation.
+        </p>
+        <p style="margin: 0;">
+          Manage your notification preferences anytime from your NGO Profile on Annadaan.
+        </p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+""",
+                distStr,
+                recipientGreeting,
+                foodName,
+                donationIdStr,
+                category,
+                quantity,
+                servings,
+                dietary,
+                allergens,
+                prepTime,
+                description,
+                handling,
+                distStr,
+                pickupAddress,
+                deadline,
+                claimUrl,
+                escapeHtml(ngoName)
+        );
     }
 
     // ── Helper formatters ──────────────────────────────────────

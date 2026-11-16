@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { ngoAPI } from '../api';
-import { Leaf, LogOut, User, Save, Bell, Smartphone } from 'lucide-react';
+import { Leaf, LogOut, User, Save, Bell, Smartphone, Mail } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
@@ -24,6 +24,7 @@ export default function NgoProfilePage() {
         latitude:         data.latitude         || '',
         longitude:        data.longitude        || '',
         smsNotificationsEnabled: Boolean(data.smsNotificationsEnabled),
+        emailNotificationsEnabled: data.emailNotificationsEnabled !== undefined ? Boolean(data.emailNotificationsEnabled) : true,
       });
     }).catch((e) => {
       const message = e.response?.data?.message || e.response?.data?.error ||
@@ -40,6 +41,7 @@ export default function NgoProfilePage() {
         latitude:  form.latitude  ? parseFloat(form.latitude)  : null,
         longitude: form.longitude ? parseFloat(form.longitude) : null,
         smsNotificationsEnabled: Boolean(form.smsNotificationsEnabled),
+        emailNotificationsEnabled: form.emailNotificationsEnabled !== undefined ? Boolean(form.emailNotificationsEnabled) : true,
       });
       await refreshUser();
       toast.success('Profile updated!');
@@ -130,6 +132,38 @@ export default function NgoProfilePage() {
           <p style={{ fontSize: '0.8rem', color: 'var(--brand-text-muted)', marginBottom: 14 }}>
             Manage how your NGO receives instant alerts for nearby food donations.
           </p>
+
+          <div style={{
+            background: 'var(--brand-surface, #f8fafc)',
+            border: '1px solid var(--brand-border, #e2e8f0)',
+            borderRadius: 8,
+            padding: '14px 16px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 12,
+            marginBottom: 16
+          }}>
+            <input
+              type="checkbox"
+              id="emailNotificationsToggle"
+              style={{ marginTop: 4, width: 18, height: 18, cursor: 'pointer', accentColor: 'var(--brand-green, #16a34a)' }}
+              checked={form.emailNotificationsEnabled !== undefined ? Boolean(form.emailNotificationsEnabled) : true}
+              onChange={e => set('emailNotificationsEnabled', e.target.checked)}
+            />
+            <div style={{ flex: 1 }}>
+              <label htmlFor="emailNotificationsToggle" style={{ fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer', display: 'block', color: 'var(--brand-text-dark, #1e293b)' }}>
+                Receive Email alerts for nearby food donations
+              </label>
+              <p style={{ fontSize: '0.78rem', color: 'var(--brand-text-muted, #64748b)', margin: '4px 0 0' }}>
+                When enabled, your NGO will automatically receive email notifications with food details, pickup deadline, and direct claim links whenever a food donation is posted within your coverage radius.
+              </p>
+              {user?.email && (
+                <div style={{ marginTop: 6, fontSize: '0.75rem', color: 'var(--brand-text-muted, #64748b)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Mail size={13} /> Registered email: <strong>{user.email}</strong>
+                </div>
+              )}
+            </div>
+          </div>
 
           <div style={{
             background: 'var(--brand-surface, #f8fafc)',

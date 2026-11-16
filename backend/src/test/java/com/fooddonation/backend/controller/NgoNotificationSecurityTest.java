@@ -1,13 +1,16 @@
 package com.fooddonation.backend.controller;
 
+import com.fooddonation.backend.dto.EmailNotificationLogResponse;
 import com.fooddonation.backend.dto.NotificationPreferenceRequest;
 import com.fooddonation.backend.dto.NotificationPreferenceResponse;
 import com.fooddonation.backend.dto.SmsNotificationLogResponse;
 import com.fooddonation.backend.entity.Donation;
+import com.fooddonation.backend.entity.EmailNotificationLog;
 import com.fooddonation.backend.entity.NgoProfile;
 import com.fooddonation.backend.entity.SmsNotificationLog;
 import com.fooddonation.backend.entity.SmsNotificationLog.DeliveryStatus;
 import com.fooddonation.backend.entity.User;
+import com.fooddonation.backend.repository.EmailNotificationLogRepository;
 import com.fooddonation.backend.repository.NgoProfileRepository;
 import com.fooddonation.backend.repository.SmsNotificationLogRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,6 +35,7 @@ class NgoNotificationSecurityTest {
 
     @Mock private NgoProfileRepository ngoProfileRepository;
     @Mock private SmsNotificationLogRepository smsNotificationLogRepository;
+    @Mock private EmailNotificationLogRepository emailNotificationLogRepository;
     @Mock private UserDetails userDetails;
 
     @InjectMocks private NgoController ngoController;
@@ -130,6 +134,40 @@ class NgoNotificationSecurityTest {
         assertNull(getFieldValueQuietly(logDto, "senderId"));
         assertNull(getFieldValueQuietly(logDto, "accountSid"));
         assertNull(getFieldValueQuietly(logDto, "authToken"));
+    }
+
+    @Test
+    @DisplayName("Security: NGO cannot access email notification logs of other NGOs")
+    void testNgoCannotAccessOtherNgoEmailLogs() {
+        when(userDetails.getUsername()).thenReturn("ngo-a@example.com");
+        when(ngoProfileRepository.findByUserEmailIgnoreCase("ngo-a@example.com")).thenReturn(Optional.of(ngoProfileA));
+
+        Donation donation = Donation.builder().id(99L).foodName("Biryani").build();
+
+        EmailNotificationLog emailLogA = EmailNotificationLog.builder()
+                .id(101L)
+                .donation(donation)
+                .recipient(ngoUserA)
+                .recipientEmail("ngo-a@example.com")
+                .subject("Annadaan Alert")
+                .deliveryStatus(EmailNotificationLog.DeliveryStatus.SENT)
+                .createdAt(LocalDateTime.now())
+                .build();
+
+        when(emailNotificationLogRepository.findByRecipientIdOrderByCreatedAtDesc(10L))
+                .thenReturn(List.of(emailLogA));
+
+        ResponseEntity<List<EmailNotificationLogResponse>> responseEntity = ngoController.emailNotifications(userDetails);
+
+        assertNotNull(responseEntity);
+        assertEquals(200, responseEntity.getStatusCode().value());
+        List<EmailNotificationLogResponse> logs = responseEntity.getBody();
+        assertNotNull(logs);
+        assertEquals(1, logs.size());
+        assertEquals(101L, logs.get(0).getId());
+
+        verify(emailNotificationLogRepository).findByRecipientIdOrderByCreatedAtDesc(10L);
+        verify(emailNotificationLogRepository, never()).findAll();
     }
 
     private Object getFieldValueQuietly(Object target, String fieldName) {

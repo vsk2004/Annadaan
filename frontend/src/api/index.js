@@ -60,6 +60,7 @@ export const ngoAPI = {
   getNotificationPreferences: () => api.get('/ngo/notification-preferences'),
   updateNotificationPreferences: (data) => api.put('/ngo/notification-preferences', data),
   smsNotifications: () => api.get('/ngo/sms-notifications'),
+  emailNotifications: () => api.get('/ngo/email-notifications'),
 };
 
 export default api;

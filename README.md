@@ -118,23 +118,26 @@ Frontend starts on: **http://localhost:5173**
 | PATCH | `/donations/{id}/delivered` | Mark as delivered |
 | GET | `/donations` | My accepted donations |
 | GET | `/stats` | NGO stats |
-| GET | `/notification-preferences` | Get NGO SMS alert preferences |
-| PUT | `/notification-preferences` | Update NGO SMS alert opt-in preference |
+| GET | `/notification-preferences` | Get NGO SMS and Email alert preferences |
+| PUT | `/notification-preferences` | Update NGO SMS/Email alert opt-in preferences |
 | GET | `/sms-notifications` | View dispatched SMS alert logs for current NGO |
+| GET | `/email-notifications` | View dispatched Email alert logs for current NGO |
 
 ---
 
-## Automated SMS Notifications for Nearby NGOs
+## Automated Email & SMS Notifications for Nearby NGOs
 
-Annadaan! includes automated SMS notifications that alert eligible nearby NGOs immediately when a donor posts an available food donation.
+Annadaan! includes automated Email (Brevo transactional API) and SMS (Twilio / Mock) notifications that alert eligible nearby NGOs immediately when a donor posts an available food donation.
 
 ### Workflow & Trigger
 1. **Donor Submission**: Donor submits valid donation form.
 2. **Persistence**: Donation is saved with status `AVAILABLE` in MySQL / H2.
 3. **Transaction Commit**: Once the database transaction commits, a `DonationCreatedEvent` is published.
-4. **Asynchronous Dispatch**: The `DonationNotificationListener` runs in a dedicated bounded executor (`notificationExecutor`), evaluates NGO eligibility within the geographic radius (Haversine formula), and dispatches SMS alerts.
-5. **Fault Isolation**: If the SMS provider encounters a failure, the donation remains `AVAILABLE` and unaffected. Failure for one recipient does not prevent alerts to other recipients.
-6. **Idempotency**: Enforced at both the service layer and the database layer via unique constraint `uk_donation_recipient` on `(donation_id, recipient_id)` to prevent duplicate messages.
+4. **Asynchronous Dispatch**:
+   - `DonationEmailNotificationListener` triggers `DonationEmailService.sendNearbyDonationAlertEmails`, which identifies eligible nearby NGOs within matching radius (Haversine formula), validates email preferences (`isEmailNotificationsEnabled`), enforces idempotency per `(donation_id, recipient_id)`, and sends responsive HTML + plain-text alert emails with claim links via Brevo.
+   - `DonationNotificationListener` evaluates NGO eligibility for SMS alerts within geographic radius, ensures opt-in consent (`isSmsNotificationsEnabled`), and dispatches SMS alerts via Twilio/Mock.
+5. **Fault Isolation**: If Brevo or the SMS provider encounters a failure, the donation remains `AVAILABLE` and unaffected. Failure for one recipient does not prevent alerts to other recipients.
+6. **Idempotency**: Enforced at both the service layer and database logging tables (`email_notification_logs` and `sms_notification_logs`) to prevent duplicate deliveries.
 
 ### SMS Environment Variables
 

@@ -25,6 +25,7 @@ public class NgoController {
     @Autowired private NgoProfileRepository ngoProfileRepository;
     @Autowired private NotificationRepository notificationRepository;
     @Autowired private com.fooddonation.backend.repository.SmsNotificationLogRepository smsNotificationLogRepository;
+    @Autowired private com.fooddonation.backend.repository.EmailNotificationLogRepository emailNotificationLogRepository;
 
     @GetMapping("/profile")
     public ResponseEntity<UserResponse.NgoProfileDto> getProfile(@AuthenticationPrincipal UserDetails user) {
@@ -52,6 +53,9 @@ public class NgoController {
         if (req.getSmsNotificationsEnabled() != null) {
             profile.setSmsNotificationsEnabled(req.getSmsNotificationsEnabled());
         }
+        if (req.getEmailNotificationsEnabled() != null) {
+            profile.setEmailNotificationsEnabled(req.getEmailNotificationsEnabled());
+        }
 
         return ResponseEntity.ok(toProfileResponse(ngoProfileRepository.save(profile)));
     }
@@ -63,6 +67,7 @@ public class NgoController {
                 .orElseThrow(() -> new RuntimeException("NGO profile not found"));
         return ResponseEntity.ok(NotificationPreferenceResponse.builder()
                 .smsNotificationsEnabled(profile.isSmsNotificationsEnabled())
+                .emailNotificationsEnabled(profile.isEmailNotificationsEnabled())
                 .message("Notification preferences retrieved successfully")
                 .build());
     }
@@ -76,12 +81,16 @@ public class NgoController {
 
         if (req.getSmsNotificationsEnabled() != null) {
             profile.setSmsNotificationsEnabled(req.getSmsNotificationsEnabled());
-            ngoProfileRepository.save(profile);
         }
+        if (req.getEmailNotificationsEnabled() != null) {
+            profile.setEmailNotificationsEnabled(req.getEmailNotificationsEnabled());
+        }
+        ngoProfileRepository.save(profile);
 
         return ResponseEntity.ok(NotificationPreferenceResponse.builder()
                 .smsNotificationsEnabled(profile.isSmsNotificationsEnabled())
-                .message("SMS notification preferences updated successfully")
+                .emailNotificationsEnabled(profile.isEmailNotificationsEnabled())
+                .message("Notification preferences updated successfully")
                 .build());
     }
 
@@ -95,6 +104,21 @@ public class NgoController {
                 .findByRecipientIdOrderByCreatedAtDesc(profile.getUser().getId())
                 .stream()
                 .map(SmsNotificationLogResponse::fromEntity)
+                .toList();
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/email-notifications")
+    public ResponseEntity<List<EmailNotificationLogResponse>> emailNotifications(
+            @AuthenticationPrincipal UserDetails user) {
+        NgoProfile profile = ngoProfileRepository.findByUserEmailIgnoreCase(user.getUsername())
+                .orElseThrow(() -> new RuntimeException("NGO profile not found"));
+
+        List<EmailNotificationLogResponse> response = emailNotificationLogRepository
+                .findByRecipientIdOrderByCreatedAtDesc(profile.getUser().getId())
+                .stream()
+                .map(EmailNotificationLogResponse::fromEntity)
                 .toList();
 
         return ResponseEntity.ok(response);
@@ -143,6 +167,7 @@ public class NgoController {
                 .latitude(profile.getLatitude())
                 .longitude(profile.getLongitude())
                 .smsNotificationsEnabled(profile.isSmsNotificationsEnabled())
+                .emailNotificationsEnabled(profile.isEmailNotificationsEnabled())
                 .build();
     }
 }

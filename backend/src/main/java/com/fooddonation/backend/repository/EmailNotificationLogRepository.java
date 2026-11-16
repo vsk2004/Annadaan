@@ -18,4 +18,10 @@ public interface EmailNotificationLogRepository extends JpaRepository<EmailNotif
     boolean existsByDonationIdAndDeliveryStatus(Long donationId, DeliveryStatus deliveryStatus);
 
     List<EmailNotificationLog> findByRecipientIdOrderByCreatedAtDesc(Long recipientId);
+
+    boolean existsByDonationIdAndRecipientId(Long donationId, Long recipientId);
+
+    boolean existsByDonationIdAndRecipientIdAndDeliveryStatus(Long donationId, Long recipientId, DeliveryStatus deliveryStatus);
+
+    Optional<EmailNotificationLog> findFirstByDonationIdAndRecipientIdOrderByCreatedAtDesc(Long donationId, Long recipientId);
 }

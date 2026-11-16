@@ -17,4 +17,5 @@ public class NgoProfileUpdateRequest {
     private Double latitude;
     private Double longitude;
     private Boolean smsNotificationsEnabled;
+    private Boolean emailNotificationsEnabled;
 }
