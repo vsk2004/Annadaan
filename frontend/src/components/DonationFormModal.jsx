@@ -117,7 +117,7 @@ export default function DonationFormModal({ onClose, onSuccess }) {
       fd.append('data', new Blob([JSON.stringify(data)], { type: 'application/json' }));
       if (image) fd.append('image', image);
       await donationAPI.create(fd);
-      toast.success('🎉 Donation posted successfully!');
+      toast.success('Your food donation has been posted successfully. Eligible nearby NGOs will be notified if SMS alerts are enabled and configured.');
       onSuccess();
     } catch (err) {
       const msg = err.response?.data?.error || 'Failed to post donation';

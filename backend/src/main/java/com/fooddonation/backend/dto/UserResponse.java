@@ -34,6 +34,7 @@ public class UserResponse {
         private String postalCode;
         private Double latitude;
         private Double longitude;
+        private Boolean smsNotificationsEnabled;
     }
 
     public static UserResponse fromUser(User user, NgoProfile ngoProfile) {
@@ -60,6 +61,7 @@ public class UserResponse {
                     .postalCode(ngoProfile.getPostalCode())
                     .latitude(ngoProfile.getLatitude())
                     .longitude(ngoProfile.getLongitude())
+                    .smsNotificationsEnabled(ngoProfile.isSmsNotificationsEnabled())
                     .build());
         }
         return builder.build();

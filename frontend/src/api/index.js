@@ -46,6 +46,7 @@ export const donationAPI = {
   deliver: (id, data = {}) => api.post(`/donations/${id}/deliver`, data),
   cancel: (id, reason = '') => api.post(`/donations/${id}/cancel`, { reason }),
   history: (id) => api.get(`/donations/${id}/history`),
+  retryEmail: (id) => api.post(`/donations/${id}/retry-email`),
 };
 
 // ── NGO ───────────────────────────────────────────────────────
@@ -56,6 +57,9 @@ export const ngoAPI = {
   activeDonations: () => api.get('/ngo/active-donations'),
   history: () => api.get('/ngo/history'),
   notifications: () => api.get('/ngo/notifications'),
+  getNotificationPreferences: () => api.get('/ngo/notification-preferences'),
+  updateNotificationPreferences: (data) => api.put('/ngo/notification-preferences', data),
+  smsNotifications: () => api.get('/ngo/sms-notifications'),
 };
 
 export default api;

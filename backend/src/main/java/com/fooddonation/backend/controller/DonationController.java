@@ -61,6 +61,14 @@ public class DonationController {
         return ResponseEntity.ok(donationService.acceptDonation(id, user.getUsername(), radiusKm));
     }
 
+    // POST /api/donations/{id}/retry-email — Retry donor notification email
+    @PostMapping("/{id}/retry-email")
+    public ResponseEntity<DonationResponse> retryEmail(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails user) {
+        return ResponseEntity.ok(donationService.retryAcceptanceEmail(id, user.getUsername()));
+    }
+
     // POST /api/donations/{id}/pickup — NGO confirms pickup
     @PostMapping("/{id}/pickup")
     public ResponseEntity<DonationResponse> pickup(

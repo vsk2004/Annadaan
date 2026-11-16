@@ -34,9 +34,16 @@ public class DonationService {
     @Autowired private DonationStatusHistoryRepository historyRepository;
     @Autowired private UserRepository userRepository;
     @Autowired private NgoProfileRepository ngoProfileRepository;
+    @Autowired private DonationEmailService donationEmailService;
+    @Autowired private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @Value("${app.upload.dir:uploads}")
     private String uploadDir;
+
+    public DonationResponse retryAcceptanceEmail(Long donationId, String requesterEmail) {
+        EmailNotificationLog logEntry = donationEmailService.retryAcceptanceEmail(donationId, requesterEmail);
+        return getDonationById(donationId, requesterEmail);
+    }
 
     // ── Helper ─────────────────────────────────────────────────
 
@@ -106,6 +113,7 @@ public class DonationService {
 
         donation = donationRepository.save(donation);
         recordHistory(donation, null, DonationStatus.AVAILABLE, donor, "Donation posted");
+        eventPublisher.publishEvent(new com.fooddonation.backend.event.DonationCreatedEvent(donation.getId()));
         return DonationResponse.fromDonation(donation);
     }
 
@@ -171,7 +179,16 @@ public class DonationService {
                 donation.getAssignedNgo().getId().equals(requester.getId());
         boolean includeCoords = isOwner || isAssignedNgo || requester.getRole() == User.Role.ADMIN;
 
-        return DonationResponse.fromDonation(donation, includeCoords);
+        NgoProfile assignedProfile = null;
+        if (donation.getAssignedNgo() != null && (isOwner || isAssignedNgo || requester.getRole() == User.Role.ADMIN)) {
+            assignedProfile = ngoProfileRepository.findByUserEmail(donation.getAssignedNgo().getEmail()).orElse(null);
+        }
+        EmailNotificationLog emailLog = null;
+        if (isOwner || isAssignedNgo || requester.getRole() == User.Role.ADMIN) {
+            emailLog = donationEmailService.getLatestEmailStatus(id).orElse(null);
+        }
+
+        return DonationResponse.fromDonation(donation, includeCoords, assignedProfile, emailLog);
     }
 
     // ── NGO — Nearby ───────────────────────────────────────────
@@ -268,7 +285,9 @@ public class DonationService {
         recordHistory(donation, prev, DonationStatus.ACCEPTED, profile.getUser(),
                 "Accepted by NGO: " + profile.getOrganizationName());
 
-        DonationResponse resp = DonationResponse.fromDonation(donation, true);
+        eventPublisher.publishEvent(new com.fooddonation.backend.event.DonationAcceptedEvent(donation.getId(), profile.getId()));
+
+        DonationResponse resp = DonationResponse.fromDonation(donation, true, profile, null);
         resp.setDistanceKm(Math.round(distance * 10.0) / 10.0);
         return resp;
     }

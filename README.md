@@ -118,6 +118,78 @@ Frontend starts on: **http://localhost:5173**
 | PATCH | `/donations/{id}/delivered` | Mark as delivered |
 | GET | `/donations` | My accepted donations |
 | GET | `/stats` | NGO stats |
+| GET | `/notification-preferences` | Get NGO SMS alert preferences |
+| PUT | `/notification-preferences` | Update NGO SMS alert opt-in preference |
+| GET | `/sms-notifications` | View dispatched SMS alert logs for current NGO |
+
+---
+
+## Automated SMS Notifications for Nearby NGOs
+
+Annadaan! includes automated SMS notifications that alert eligible nearby NGOs immediately when a donor posts an available food donation.
+
+### Workflow & Trigger
+1. **Donor Submission**: Donor submits valid donation form.
+2. **Persistence**: Donation is saved with status `AVAILABLE` in MySQL / H2.
+3. **Transaction Commit**: Once the database transaction commits, a `DonationCreatedEvent` is published.
+4. **Asynchronous Dispatch**: The `DonationNotificationListener` runs in a dedicated bounded executor (`notificationExecutor`), evaluates NGO eligibility within the geographic radius (Haversine formula), and dispatches SMS alerts.
+5. **Fault Isolation**: If the SMS provider encounters a failure, the donation remains `AVAILABLE` and unaffected. Failure for one recipient does not prevent alerts to other recipients.
+6. **Idempotency**: Enforced at both the service layer and the database layer via unique constraint `uk_donation_recipient` on `(donation_id, recipient_id)` to prevent duplicate messages.
+
+### SMS Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `SMS_ENABLED` | `false` | Master toggle to enable SMS dispatch (`true` / `false`) |
+| `SMS_PROVIDER` | `mock` | Active provider: `mock` (development) or `twilio` (production) |
+| `TWILIO_ACCOUNT_SID` | *(empty)* | Twilio Account SID (starts with `AC...`) |
+| `TWILIO_AUTH_TOKEN` | *(empty)* | Twilio Auth Token (keep secret) |
+| `TWILIO_FROM_NUMBER` | *(empty)* | Twilio SMS-enabled phone number in E.164 format (e.g. `+12025550123`) |
+| `TWILIO_MESSAGING_SERVICE_SID` | *(empty)* | Optional Twilio Messaging Service SID (starts with `MG...`) |
+| `APP_BASE_URL` | `http://localhost:5173` | Frontend URL included in SMS action links |
+| `APP_SMS_NOTIFICATION_RADIUS_KM` | `10.0` | Maximum matching radius for nearby NGO notifications |
+
+### Twilio Setup Guide
+
+Twilio provides direct, global transactional SMS without requiring complex DLT registrations:
+
+1. **Twilio Account Setup**:
+   - Sign up or log in at [twilio.com](https://www.twilio.com).
+   - In the Twilio Console Dashboard, find your **Account SID** and **Auth Token**.
+2. **Phone Number or Messaging Service**:
+   - Buy or configure an SMS-capable phone number under **Phone Numbers > Manage > Active Numbers**.
+   - Copy the number in E.164 format (e.g. `+12025550123`) and set `TWILIO_FROM_NUMBER`.
+   - Alternatively, if using a Messaging Service, configure `TWILIO_MESSAGING_SERVICE_SID` (e.g. `MG...`).
+3. **Configure Environment Variables in `backend/.env`**:
+   ```bash
+   SMS_ENABLED=true
+   SMS_PROVIDER=twilio
+   TWILIO_ACCOUNT_SID=ACXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+   TWILIO_AUTH_TOKEN=your_auth_token_here
+   TWILIO_FROM_NUMBER=+12025550123
+   ```
+4. **Outgoing Message Format**:
+   - SMS messages are automatically generated and dispatched to eligible nearby NGOs when a food donation is created:
+     ```text
+     Annadaan Alert: Fresh Biryani (15 MEALS) is available ~3.5 km away. Pickup before: 06:30 PM, 10 Nov. Claim: http://localhost:5173/ngo/dashboard
+     ```
+
+### NGO Consent & Opt-In Settings
+- Under **NGO Profile > Notification Preferences**, NGOs can enable or disable:
+  `"Receive SMS alerts for nearby food donations"`
+- By default, SMS notifications remain disabled until the NGO explicitly opts in.
+- NGOs can opt out anytime from their profile page.
+- Inactive accounts, unverified NGOs, NGOs without a valid Indian mobile number (`91XXXXXXXXXX`), and NGOs outside the matching radius are automatically excluded.
+
+### Local Testing with Mock Mode
+During development, keep `SMS_PROVIDER=mock`:
+- Set `SMS_ENABLED=true` in `backend/.env`.
+- Post a new food donation from a donor account.
+- Check backend console logs to see the simulated dispatch with masked recipient phone numbers and generated `mock-UUID` tracking IDs:
+  ```text
+  [MOCK SMS] Simulated alert sent to 9198*****210 for donation #101: Hot Meals (25.0 MEALS) ~2.4 km away. Pickup by: 08:30 PM, 10 Nov. Link: http://localhost:5173/ngo/dashboard
+  ```
+- No real SMS charges or external network calls are made in mock mode.
 
 ---
 

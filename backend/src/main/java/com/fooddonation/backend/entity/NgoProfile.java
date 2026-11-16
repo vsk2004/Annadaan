@@ -48,6 +48,22 @@ public class NgoProfile {
     private Double latitude;
     private Double longitude;
 
+    @Column(name = "sms_notifications_enabled", columnDefinition = "boolean default false")
+    @Builder.Default
+    private Boolean smsNotificationsEnabled = false;
+
+    public boolean isSmsNotificationsEnabled() {
+        return Boolean.TRUE.equals(smsNotificationsEnabled);
+    }
+
+    @Column(name = "email_notifications_enabled", columnDefinition = "boolean default true")
+    @Builder.Default
+    private Boolean emailNotificationsEnabled = true;
+
+    public boolean isEmailNotificationsEnabled() {
+        return emailNotificationsEnabled == null || Boolean.TRUE.equals(emailNotificationsEnabled);
+    }
+
     @CreationTimestamp
     @Column(updatable = false)
     private LocalDateTime createdAt;

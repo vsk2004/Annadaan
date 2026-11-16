@@ -24,6 +24,7 @@ public class NgoController {
     @Autowired private DonationService donationService;
     @Autowired private NgoProfileRepository ngoProfileRepository;
     @Autowired private NotificationRepository notificationRepository;
+    @Autowired private com.fooddonation.backend.repository.SmsNotificationLogRepository smsNotificationLogRepository;
 
     @GetMapping("/profile")
     public ResponseEntity<UserResponse.NgoProfileDto> getProfile(@AuthenticationPrincipal UserDetails user) {
@@ -48,8 +49,55 @@ public class NgoController {
         if (req.getPostalCode() != null)       profile.setPostalCode(req.getPostalCode());
         if (req.getLatitude() != null)         profile.setLatitude(req.getLatitude());
         if (req.getLongitude() != null)        profile.setLongitude(req.getLongitude());
+        if (req.getSmsNotificationsEnabled() != null) {
+            profile.setSmsNotificationsEnabled(req.getSmsNotificationsEnabled());
+        }
 
         return ResponseEntity.ok(toProfileResponse(ngoProfileRepository.save(profile)));
+    }
+
+    @GetMapping("/notification-preferences")
+    public ResponseEntity<NotificationPreferenceResponse> getNotificationPreferences(
+            @AuthenticationPrincipal UserDetails user) {
+        NgoProfile profile = ngoProfileRepository.findByUserEmailIgnoreCase(user.getUsername())
+                .orElseThrow(() -> new RuntimeException("NGO profile not found"));
+        return ResponseEntity.ok(NotificationPreferenceResponse.builder()
+                .smsNotificationsEnabled(profile.isSmsNotificationsEnabled())
+                .message("Notification preferences retrieved successfully")
+                .build());
+    }
+
+    @PutMapping("/notification-preferences")
+    public ResponseEntity<NotificationPreferenceResponse> updateNotificationPreferences(
+            @RequestBody NotificationPreferenceRequest req,
+            @AuthenticationPrincipal UserDetails user) {
+        NgoProfile profile = ngoProfileRepository.findByUserEmailIgnoreCase(user.getUsername())
+                .orElseThrow(() -> new RuntimeException("NGO profile not found"));
+
+        if (req.getSmsNotificationsEnabled() != null) {
+            profile.setSmsNotificationsEnabled(req.getSmsNotificationsEnabled());
+            ngoProfileRepository.save(profile);
+        }
+
+        return ResponseEntity.ok(NotificationPreferenceResponse.builder()
+                .smsNotificationsEnabled(profile.isSmsNotificationsEnabled())
+                .message("SMS notification preferences updated successfully")
+                .build());
+    }
+
+    @GetMapping("/sms-notifications")
+    public ResponseEntity<List<SmsNotificationLogResponse>> smsNotifications(
+            @AuthenticationPrincipal UserDetails user) {
+        NgoProfile profile = ngoProfileRepository.findByUserEmailIgnoreCase(user.getUsername())
+                .orElseThrow(() -> new RuntimeException("NGO profile not found"));
+
+        List<SmsNotificationLogResponse> response = smsNotificationLogRepository
+                .findByRecipientIdOrderByCreatedAtDesc(profile.getUser().getId())
+                .stream()
+                .map(SmsNotificationLogResponse::fromEntity)
+                .toList();
+
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/stats")
@@ -94,6 +142,7 @@ public class NgoController {
                 .postalCode(profile.getPostalCode())
                 .latitude(profile.getLatitude())
                 .longitude(profile.getLongitude())
+                .smsNotificationsEnabled(profile.isSmsNotificationsEnabled())
                 .build();
     }
 }

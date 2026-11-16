@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import Navbar from '../components/Navbar';
 import { Leaf } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { validatePassword } from '../utils/validation';
+import PasswordRequirements from '../components/PasswordRequirements';
 
 export default function RegisterPage() {
   const { register } = useAuth();
@@ -35,8 +37,8 @@ export default function RegisterPage() {
     else if (!/\S+@\S+\.\S+/.test(form.email)) e.email = 'Invalid email';
     if (!form.phone.trim())   e.phone   = 'Phone is required';
     else if (!/^[+]?[0-9()\-\s]{7,20}$/.test(form.phone.trim())) e.phone = 'Invalid phone number';
-    if (!form.password)       e.password= 'Password required (min 8 chars)';
-    else if (form.password.length < 8) e.password = 'At least 8 characters required';
+    const pwdErr = validatePassword(form.password);
+    if (pwdErr) e.password = pwdErr;
     if (form.password !== form.confirmPassword) e.confirmPassword = 'Passwords do not match';
     return e;
   };
@@ -154,6 +156,7 @@ export default function RegisterPage() {
                     {errors.confirmPassword && <span className="form-error">{errors.confirmPassword}</span>}
                   </div>
                 </div>
+                <PasswordRequirements password={form.password} />
               </>
             )}
 

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { ngoAPI } from '../api';
-import { Leaf, LogOut, User, Save } from 'lucide-react';
+import { Leaf, LogOut, User, Save, Bell, Smartphone } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
@@ -23,6 +23,7 @@ export default function NgoProfilePage() {
         postalCode:       data.postalCode       || '',
         latitude:         data.latitude         || '',
         longitude:        data.longitude        || '',
+        smsNotificationsEnabled: Boolean(data.smsNotificationsEnabled),
       });
     }).catch((e) => {
       const message = e.response?.data?.message || e.response?.data?.error ||
@@ -38,6 +39,7 @@ export default function NgoProfilePage() {
         ...form,
         latitude:  form.latitude  ? parseFloat(form.latitude)  : null,
         longitude: form.longitude ? parseFloat(form.longitude) : null,
+        smsNotificationsEnabled: Boolean(form.smsNotificationsEnabled),
       });
       await refreshUser();
       toast.success('Profile updated!');
@@ -117,6 +119,47 @@ export default function NgoProfilePage() {
             <div className="form-group">
               <label className="form-label">Longitude *</label>
               <input {...inp('longitude', '72.8777', 'number')} step="any" />
+            </div>
+          </div>
+
+          <hr style={{ margin: '20px 0', border: 'none', borderTop: '1px solid var(--brand-border)' }} />
+
+          <h3 style={{ fontWeight: 700, marginBottom: 8, fontSize: '0.9rem', color: 'var(--brand-green)', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Bell size={16} /> Notification Preferences
+          </h3>
+          <p style={{ fontSize: '0.8rem', color: 'var(--brand-text-muted)', marginBottom: 14 }}>
+            Manage how your NGO receives instant alerts for nearby food donations.
+          </p>
+
+          <div style={{
+            background: 'var(--brand-surface, #f8fafc)',
+            border: '1px solid var(--brand-border, #e2e8f0)',
+            borderRadius: 8,
+            padding: '14px 16px',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 12,
+            marginBottom: 16
+          }}>
+            <input
+              type="checkbox"
+              id="smsNotificationsToggle"
+              style={{ marginTop: 4, width: 18, height: 18, cursor: 'pointer', accentColor: 'var(--brand-green, #16a34a)' }}
+              checked={Boolean(form.smsNotificationsEnabled)}
+              onChange={e => set('smsNotificationsEnabled', e.target.checked)}
+            />
+            <div style={{ flex: 1 }}>
+              <label htmlFor="smsNotificationsToggle" style={{ fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer', display: 'block', color: 'var(--brand-text-dark, #1e293b)' }}>
+                Receive SMS alerts for nearby food donations
+              </label>
+              <p style={{ fontSize: '0.78rem', color: 'var(--brand-text-muted, #64748b)', margin: '4px 0 0' }}>
+                When enabled, your NGO will automatically receive SMS alerts with pickup time and claim links for available food donations within your coverage radius.
+              </p>
+              {user?.phoneNumber && (
+                <div style={{ marginTop: 6, fontSize: '0.75rem', color: 'var(--brand-text-muted, #64748b)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <Smartphone size={13} /> Registered mobile: <strong>{user.phoneNumber}</strong>
+                </div>
+              )}
             </div>
           </div>
 

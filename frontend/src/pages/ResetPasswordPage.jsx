@@ -4,6 +4,8 @@ import { Leaf } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Navbar from '../components/Navbar';
 import { authAPI } from '../api';
+import { validatePassword } from '../utils/validation';
+import PasswordRequirements from '../components/PasswordRequirements';
 
 export default function ResetPasswordPage() {
   const [searchParams] = useSearchParams();
@@ -31,8 +33,9 @@ export default function ResetPasswordPage() {
 
   const handleResetPassword = async (event) => {
     event.preventDefault();
-    if (password.length < 8) {
-      toast.error('Password must be at least 8 characters.');
+    const passwordError = validatePassword(password);
+    if (passwordError) {
+      toast.error(passwordError);
       return;
     }
     if (password !== confirmPassword) {
@@ -67,13 +70,23 @@ export default function ResetPasswordPage() {
               {isReset ? 'Choose a new password' : 'Forgot your password?'}
             </h1>
             <p style={{ color: 'var(--brand-text-muted)', fontSize: '0.875rem', marginTop: 8 }}>
-              {isReset ? 'Use at least 8 characters for your new password.' : 'Enter your account email and we will send a reset link if it matches an account.'}
+              {isReset ? 'Create a secure new password for your account.' : 'Enter your account email and we will send a reset link if it matches an account.'}
             </p>
           </div>
 
           {!isReset && sent ? (
-            <div role="status" className="alert alert-info">
-              If the address matches an account, you may receive a reset link. Check your inbox shortly; if it does not arrive, try again later.
+            <div>
+              <div role="status" className="alert alert-info">
+                If the address matches an account, you may receive a reset link. Check your inbox shortly; if it does not arrive, check your spam folder or try again.
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setSent(false)}
+                style={{ width: '100%', marginTop: 16, justifyContent: 'center' }}
+              >
+                Send another reset link
+              </button>
             </div>
           ) : (
             <form onSubmit={isReset ? handleResetPassword : handleForgotPassword} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -82,6 +95,7 @@ export default function ResetPasswordPage() {
                   <div className="form-group">
                     <label className="form-label">New password</label>
                     <input className="form-input" type="password" autoComplete="new-password" minLength={8} required value={password} onChange={event => setPassword(event.target.value)} />
+                    <PasswordRequirements password={password} />
                   </div>
                   <div className="form-group">
                     <label className="form-label">Confirm new password</label>

@@ -5,7 +5,7 @@ import { donationAPI } from '../api';
 import StatusBadge from '../components/StatusBadge';
 import StatusTracker from '../components/StatusTracker';
 import { format } from 'date-fns';
-import { MapPin, Clock, ArrowLeft, AlertTriangle, CheckCircle } from 'lucide-react';
+import { MapPin, Clock, ArrowLeft, AlertTriangle, CheckCircle, Mail, RotateCw } from 'lucide-react';
 import { Skeleton } from '../components/UI';
 import toast from 'react-hot-toast';
 
@@ -37,24 +37,44 @@ export default function DonationDetailPage() {
   const [donation, setDonation] = useState(null);
   const [history, setHistory]   = useState([]);
   const [loading, setLoading]   = useState(true);
+  const [retrying, setRetrying] = useState(false);
 
   const backPath = user?.role === 'DONOR' ? '/donor/dashboard' : '/ngo/dashboard';
 
+  const fetchDetails = async () => {
+    try {
+      const [dRes, hRes] = await Promise.all([
+        donationAPI.getById(id),
+        donationAPI.history(id),
+      ]);
+      setDonation(dRes.data);
+      setHistory(hRes.data);
+    } catch (e) {
+      toast.error('Could not load donation');
+      navigate(backPath);
+    } finally { setLoading(false); }
+  };
+
   useEffect(() => {
-    (async () => {
-      try {
-        const [dRes, hRes] = await Promise.all([
-          donationAPI.getById(id),
-          donationAPI.history(id),
-        ]);
-        setDonation(dRes.data);
-        setHistory(hRes.data);
-      } catch (e) {
-        toast.error('Could not load donation');
-        navigate(backPath);
-      } finally { setLoading(false); }
-    })();
+    fetchDetails();
   }, [id]);
+
+  const handleRetryEmail = async () => {
+    setRetrying(true);
+    try {
+      const { data } = await donationAPI.retryEmail(id);
+      setDonation(data);
+      if (data.emailNotificationStatus === 'SENT') {
+        toast.success('Notification email sent successfully!');
+      } else {
+        toast.error('Notification email delivery failed: ' + (data.emailFailureReason || 'Please check Brevo settings'));
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to retry notification email');
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   if (loading) return (
     <div style={{ padding: 32 }}>
@@ -141,6 +161,10 @@ export default function DonationDetailPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <Detail label="Donor"         value={d.donorName} />
           <Detail label="Assigned NGO"  value={d.assignedNgoName || (d.status === 'AVAILABLE' ? 'Not yet accepted' : '—')} />
+          {d.assignedNgoContactPerson && <Detail label="NGO Representative" value={d.assignedNgoContactPerson} />}
+          {d.assignedNgoEmail && <Detail label="NGO Email" value={d.assignedNgoEmail} />}
+          {d.assignedNgoPhone && <Detail label="NGO Phone" value={d.assignedNgoPhone} />}
+          {d.assignedNgoAddress && <Detail label="NGO Address" value={d.assignedNgoAddress} />}
           <Ts     label="Posted at"     ts={d.createdAt} />
           <Ts     label="Accepted at"   ts={d.acceptedAt} />
           <Ts     label="Picked up at"  ts={d.pickedUpAt} />
@@ -150,6 +174,39 @@ export default function DonationDetailPage() {
           {d.completionNotes && <Detail label="Completion notes" value={d.completionNotes} />}
           {d.actualServingsDelivered && <Detail label="Actual servings delivered" value={`${d.actualServingsDelivered} people`} />}
         </div>
+
+        {/* Email Notification Status Banner (for accepted donations) */}
+        {d.status !== 'AVAILABLE' && d.status !== 'CANCELLED' && (
+          <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid var(--brand-border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem' }}>
+                <Mail size={16} style={{ color: d.emailNotificationStatus === 'SENT' ? '#16a34a' : (d.emailNotificationStatus === 'FAILED' ? '#dc2626' : 'var(--brand-green)') }} />
+                <span>
+                  {d.emailNotificationStatus === 'SENT' ? (
+                    <span style={{ color: '#16a34a', fontWeight: 600 }}>✓ Donor notification email sent successfully</span>
+                  ) : d.emailNotificationStatus === 'FAILED' ? (
+                    <span style={{ color: '#dc2626', fontWeight: 600 }}>
+                      ⚠️ Email notification delivery failed {d.emailFailureReason ? `(${d.emailFailureReason})` : ''}
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--brand-text-muted)' }}>Email notification status: Pending / Processing</span>
+                  )}
+                </span>
+              </div>
+              {d.emailNotificationStatus !== 'SENT' && (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={handleRetryEmail}
+                  disabled={retrying}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.8rem' }}
+                >
+                  <RotateCw size={14} className={retrying ? 'animate-spin' : ''} />
+                  {retrying ? 'Retrying...' : 'Retry Email'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Status History (audit trail) */}

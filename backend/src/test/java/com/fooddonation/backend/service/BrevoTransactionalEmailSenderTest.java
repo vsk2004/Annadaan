@@ -9,8 +9,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -31,7 +30,7 @@ class BrevoTransactionalEmailSenderTest {
     void setUp() {
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
-        sender = new BrevoTransactionalEmailSender(builder, API_KEY, "verified@example.com");
+        sender = new BrevoTransactionalEmailSender(builder, API_KEY, "verified@example.com", "Annadaan");
     }
 
     @Test
@@ -39,6 +38,7 @@ class BrevoTransactionalEmailSenderTest {
         server.expect(requestTo(API_URL))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(header("api-key", API_KEY))
+                .andExpect(jsonPath("$.sender.name").value("Annadaan"))
                 .andExpect(jsonPath("$.sender.email").value("verified@example.com"))
                 .andExpect(jsonPath("$.to[0].email").value("user@example.com"))
                 .andExpect(jsonPath("$.textContent").value(org.hamcrest.Matchers.containsString(RESET_TOKEN)))
@@ -46,6 +46,27 @@ class BrevoTransactionalEmailSenderTest {
 
         sender.sendResetEmail("user@example.com", "Reset password", "Use token " + RESET_TOKEN);
 
+        server.verify();
+    }
+
+    @Test
+    void sendsHtmlAndTextEmailWithRecipientName() {
+        server.expect(requestTo(API_URL))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("api-key", API_KEY))
+                .andExpect(jsonPath("$.sender.name").value("Annadaan"))
+                .andExpect(jsonPath("$.sender.email").value("verified@example.com"))
+                .andExpect(jsonPath("$.to[0].name").value("John Donor"))
+                .andExpect(jsonPath("$.to[0].email").value("john@example.com"))
+                .andExpect(jsonPath("$.subject").value("Your Annadaan Donation Has Been Accepted!"))
+                .andExpect(jsonPath("$.htmlContent").value(org.hamcrest.Matchers.containsString("<h1>Accepted</h1>")))
+                .andExpect(jsonPath("$.textContent").value(org.hamcrest.Matchers.containsString("Accepted text")))
+                .andRespond(withSuccess("{\"messageId\":\"brevo-msg-999\"}", MediaType.APPLICATION_JSON));
+
+        String messageId = sender.sendEmail("john@example.com", "John Donor",
+                "Your Annadaan Donation Has Been Accepted!", "<h1>Accepted</h1>", "Accepted text");
+
+        assertEquals("brevo-msg-999", messageId);
         server.verify();
     }
 
@@ -70,5 +91,11 @@ class BrevoTransactionalEmailSenderTest {
         assertThrows(BrevoEmailDeliveryException.class,
                 () -> unconfiguredSender.sendResetEmail("user@example.com", "Reset password", RESET_TOKEN));
         server.verify();
+    }
+
+    @Test
+    void rejectsBlankRecipientEmail() {
+        assertThrows(BrevoEmailDeliveryException.class,
+                () -> sender.sendEmail("   ", "Donor", "Subject", "<p>hi</p>", "hi"));
     }
 }

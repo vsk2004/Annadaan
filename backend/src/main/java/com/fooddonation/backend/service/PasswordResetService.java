@@ -34,6 +34,7 @@ public class PasswordResetService {
     @Autowired private BrevoTransactionalEmailSender emailSender;
 
     @Value("${app.frontend.url}") private String frontendUrl;
+    @Value("${app.mail.from:projectannadaan@gmail.com}") private String senderAddress;
 
     private final SecureRandom secureRandom = new SecureRandom();
 
@@ -44,12 +45,18 @@ public class PasswordResetService {
 
         User user = userRepository.findByEmailIgnoreCase(email.trim())
                 .orElse(null);
-        if (user == null) return;
+        if (user == null) {
+            logger.info("Password reset requested for non-registered email: {}", email);
+            return;
+        }
 
         boolean recentlyRequested = resetTokenRepository.findFirstByUserIdOrderByCreatedAtDesc(user.getId())
                 .map(token -> token.getCreatedAt().isAfter(now.minusSeconds(REQUEST_COOLDOWN_SECONDS)))
                 .orElse(false);
-        if (recentlyRequested) return;
+        if (recentlyRequested) {
+            logger.info("Password reset request throttled for user {} (cooldown {}s)", user.getEmail(), REQUEST_COOLDOWN_SECONDS);
+            return;
+        }
 
         resetTokenRepository.deleteByUserId(user.getId());
 
@@ -64,18 +71,25 @@ public class PasswordResetService {
                 .build());
 
         String resetUrl = frontendUrl.replaceAll("/+$", "") + "/reset-password?token=" + rawToken;
+        logger.info("Password reset link generated for [{}]: {}", user.getEmail(), resetUrl);
         try {
             emailSender.sendResetEmail(user.getEmail(), "Reset your Annadaan! password",
                     "We received a request to reset your password. Use this link within 30 minutes:\n\n"
                             + resetUrl + "\n\nIf you did not request this, you can ignore this email.");
         } catch (BrevoEmailDeliveryException e) {
             resetTokenRepository.delete(resetToken);
-            logger.warn("Password reset email delivery failed; the reset token was revoked.");
+            logger.warn("Password reset email delivery failed; the reset token was revoked. Ensure BREVO_API_KEY is configured in backend/.env and sender [{}] is verified in Brevo.", senderAddress);
         }
     }
 
+    public static final String PASSWORD_REGEX = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{8,}$";
+    public static final String PASSWORD_REQUIREMENT_MESSAGE = "Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one digit, and one special character";
+
     @Transactional
     public void resetPassword(ResetPasswordRequest request) {
+        if (request.getPassword() == null || !request.getPassword().matches(PASSWORD_REGEX)) {
+            throw new IllegalArgumentException(PASSWORD_REQUIREMENT_MESSAGE);
+        }
         if (!request.getPassword().equals(request.getConfirmPassword())) {
             throw new IllegalArgumentException("Passwords do not match");
         }

@@ -70,6 +70,9 @@ public class AuthService {
         }
     }
 
+    public static final String PASSWORD_REGEX = "^(?=.*[a-z])(?=.*[A-Z])(?=.*\\d)(?=.*[^A-Za-z0-9]).{8,}$";
+    public static final String PASSWORD_REQUIREMENT_MESSAGE = "Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one digit, and one special character";
+
     @Transactional
     public AuthResponse register(RegisterRequest req) {
         if (req.getPhone() != null) {
@@ -79,6 +82,9 @@ public class AuthService {
             req.setEmail(req.getEmail().trim().toLowerCase(Locale.ROOT));
         }
 
+        if (req.getPassword() == null || !req.getPassword().matches(PASSWORD_REGEX)) {
+            throw new IllegalArgumentException(PASSWORD_REQUIREMENT_MESSAGE);
+        }
         if (!req.getPassword().equals(req.getConfirmPassword())) {
             throw new IllegalArgumentException("Passwords do not match");
         }

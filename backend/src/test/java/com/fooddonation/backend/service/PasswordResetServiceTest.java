@@ -116,7 +116,7 @@ class PasswordResetServiceTest {
                 .id(3L).user(user).tokenHash("stored-hash").expiresAt(LocalDateTime.now().plusMinutes(10)).build();
         when(resetTokenRepository.findByTokenHashAndExpiresAtAfter(anyString(), any(LocalDateTime.class)))
                 .thenReturn(Optional.of(validToken));
-        when(passwordEncoder.encode("new-password-123")).thenReturn("new-password-hash");
+        when(passwordEncoder.encode("NewPassword123!")).thenReturn("new-password-hash");
         when(userRepository.save(user)).thenReturn(user);
 
         service.resetPassword(request("valid-token"));
@@ -126,11 +126,56 @@ class PasswordResetServiceTest {
         verify(resetTokenRepository).deleteByUserId(user.getId());
     }
 
+    @Test
+    void rejectsPasswordMissingUppercase() {
+        ResetPasswordRequest req = request("valid-token");
+        req.setPassword("newpassword123!");
+        req.setConfirmPassword("newpassword123!");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.resetPassword(req));
+        assertTrue(ex.getMessage().contains("uppercase"));
+    }
+
+    @Test
+    void rejectsPasswordMissingLowercase() {
+        ResetPasswordRequest req = request("valid-token");
+        req.setPassword("NEWPASSWORD123!");
+        req.setConfirmPassword("NEWPASSWORD123!");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.resetPassword(req));
+        assertTrue(ex.getMessage().contains("lowercase"));
+    }
+
+    @Test
+    void rejectsPasswordMissingDigit() {
+        ResetPasswordRequest req = request("valid-token");
+        req.setPassword("NewPassword!@#");
+        req.setConfirmPassword("NewPassword!@#");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.resetPassword(req));
+        assertTrue(ex.getMessage().contains("digit"));
+    }
+
+    @Test
+    void rejectsPasswordMissingSpecialCharacter() {
+        ResetPasswordRequest req = request("valid-token");
+        req.setPassword("NewPassword123");
+        req.setConfirmPassword("NewPassword123");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.resetPassword(req));
+        assertTrue(ex.getMessage().contains("special character"));
+    }
+
+    @Test
+    void rejectsPasswordTooShort() {
+        ResetPasswordRequest req = request("valid-token");
+        req.setPassword("New1!");
+        req.setConfirmPassword("New1!");
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> service.resetPassword(req));
+        assertTrue(ex.getMessage().contains("8 characters"));
+    }
+
     private ResetPasswordRequest request(String token) {
         ResetPasswordRequest request = new ResetPasswordRequest();
         request.setToken(token);
-        request.setPassword("new-password-123");
-        request.setConfirmPassword("new-password-123");
+        request.setPassword("NewPassword123!");
+        request.setConfirmPassword("NewPassword123!");
         return request;
     }
 }
